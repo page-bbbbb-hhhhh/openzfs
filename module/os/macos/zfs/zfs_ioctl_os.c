@@ -161,6 +161,8 @@ zfsdev_state_destroy(dev_t dev)
 		zs->zs_minor = -1;
 		zfs_onexit_destroy(zs->zs_onexit);
 		zfs_zevent_destroy(zs->zs_zevent);
+		zs->zs_onexit = NULL;
+		zs->zs_zevent = NULL;
 	}
 	return (0);
 }
@@ -389,4 +391,22 @@ zfsdev_detach(void)
 		(void) cdevsw_remove(zfs_major, &zfs_cdevsw);
 		zfs_major = 0;
 	}
+
+	/*
+	 * Blowing away /dev/zfs causes any open fd to receive ENODEV,
+	 * and as the cdevw is set to notsup, we do not receive close
+	 * (zfsdev_release). Then we need to manually release any
+	 * onexit, and event, nodes still around. Usually from zed.
+	 * The zs nodes themselves are freed in zfs_kmod_fini().
+	 */
+	zfsdev_state_t *zs;
+	mutex_enter(&zfsdev_state_lock);
+	for (zs = zfsdev_state_list; zs != NULL; zs = zs->zs_next) {
+		dprintf("%s: manually releasing %p\n", __func__, zs);
+		if (zs->zs_onexit)
+			zfs_onexit_destroy(zs->zs_onexit);
+		if (zs->zs_zevent)
+			zfs_zevent_destroy(zs->zs_zevent);
+	}
+	mutex_exit(&zfsdev_state_lock);
 }
